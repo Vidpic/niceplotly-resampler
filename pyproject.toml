@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "niceplotly-resampler"
+version = "0.1.0"
+authors = [{ name = "Vidpic" }]
+description = "Visualize large time series data with plotly.py in NiceGUI"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = ['plotly', 'pandas', 'numpy']
+
+[project.urls]
+Repository = "https://github.com/Vidpic/niceplotly_resampler"
+Issues = "https://github.com/Vidpic/niceplotly_resampler/issues"
+
+[tool.setuptools.packages.find]
+include = ["niceplotly_resampler"]

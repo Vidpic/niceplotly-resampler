@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "clean",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "for /d %d in (*.egg-info) do @rmdir /s /q \"%d\" && if exist dist (rmdir /s /q dist)"
+      ],
+      "presentation": {
+        "reveal": "always"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "build niceplotly_resampler",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "build"
+      ],
+      "presentation": {
+        "reveal": "always"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "clean and build",
+      "dependsOn": [
+        "clean",
+        "build niceplotly_resampler"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "upload to testpypi",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "twine",
+        "upload",
+        "--repository",
+        "testpypi",
+        "dist/*"
+      ],
+      "dependsOn": [
+        "clean and build",
+      ],
+      "presentation": {
+        "reveal": "always"
+      },
+      "problemMatcher": []
+    },
+  ]
+}
