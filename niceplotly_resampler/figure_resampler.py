@@ -1,31 +1,61 @@
 from typing import Optional, Tuple, Dict, Any
-from nicegui import ui
 import numpy as np
-import polars as pl
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from plotly.basedatatypes import BaseTraceType
-from plotly.graph_objs._figure import Figure
+from tsdownsample import (
+    MinMaxLTTBDownsampler as MinMaxLTTB,
+    MinMaxDownsampler as MinMax,
+    M4Downsampler as M4,
+    LTTBDownsampler as LTTB,
+)
+from .gap_handler import MedDiffGapHandler
+from .nicegui_plotly_handler import show, update
+
 
 class FigureResampler:
-    def __init__(self, num_points: int = 1000, webgl: bool = False):
+    def __init__(
+        self,
+        num_points: int = 1000,
+        webgl: bool = False,
+        downsampler=MinMaxLTTB(),
+        gap_handler=MedDiffGapHandler(),
+    ):
         """
-        Initialize the PlotlyResampler wrapper around a Plotly `go.Figure`.
+        A resampling Plotly Figure wrapper supporting multiple subplots, gap handling, and downsampling.
+        """
+        self.num_points = num_points
+        self.webgl = webgl
+        self.downsampler = downsampler
+        self.gap_handler = gap_handler
 
-        Parameters
-        ----------
-        num_points : int, default=1000
-            The target number of points to downsample each trace to.
-        webgl : bool, default=False
-            Whether to use ScatterGL (True) or Scatter (False) for rendering.
-        """
-        self.figure: go.Figure = go.Figure()
-        self.num_points: int = num_points
-        self.webgl: bool = webgl
+        self.figure = go.Figure()
         self.traces: Dict[str, Dict[str, Any]] = {}
-        self.x_range: Tuple[float, float] = (0, 100)
-        self.subplot_mode: bool = False
+        self.rows = 1
+        self.cols = 1
+        self.subplot_ranges: Dict[Tuple[int, int], Dict[str, Tuple[float, float]]] = {}
+        self.subplot_mode = False
         self.plot = None
+        self.shared_xaxes = False
+        self.shared_yaxes = False
+
+        self.figure.update_layout(dragmode="zoom")
+        self.figure.update_xaxes(fixedrange=False)
+        self.figure.update_yaxes(fixedrange=False)
+
+    def _init_subplot_range(
+        self, row: int, col: int, x_data: np.ndarray, y_data: np.ndarray
+    ) -> None:
+        if (row, col) not in self.subplot_ranges:
+            x_range = (float(np.min(x_data)), float(np.max(x_data))) if x_data.size else (0, 100)
+            y_range = (float(np.min(y_data)), float(np.max(y_data))) if y_data.size else (0, 1)
+
+            self.subplot_ranges[(row, col)] = {
+                "x_range": x_range,
+                "y_range": y_range,
+                "initial_x_range": x_range,
+                "initial_y_range": y_range,
+            }
 
     def add_trace(
         self,
@@ -34,116 +64,49 @@ class FigureResampler:
         col: Optional[int] = None,
         secondary_y: Optional[bool] = None,
         exclude_empty_subplots: bool = False,
-        **kwargs
-    ) -> Figure:
-        """
-        Add a trace to the figure.
-
-        add_trace(
-            trace: BaseTraceType or dict or None = None,
-            row: int or str or None = None,
-            col: int or str or None = None,
-            secondary_y: bool or None = None,
-            exclude_empty_subplots: bool = False,
-            **kwargs
-        ) -> Figure
-
-        Adds a trace to the figure.
-
-        Parameters
-        ----------
-        trace : BaseTraceType, dict, or None, default=None
-            An instance of a Plotly trace (e.g. go.Scatter) or a dict describing a trace.
-            If None, a trace will be constructed from the kwargs provided.
-        row : int, str, or None, default=None
-            Subplot row index (starting from 1) for the trace to be added. Only valid if the figure
-            was created using `make_subplots`. If 'all', applies to all rows.
-        col : int, str, or None, default=None
-            Subplot column index (starting from 1) for the trace to be added. Only valid if the figure
-            was created using `make_subplots`. If 'all', applies to all columns.
-        secondary_y : bool or None, default=None
-            If True, associate this trace with the secondary y-axis of the subplot at the specified row and col.
-        exclude_empty_subplots : bool, default=False
-            If True, the trace will not be added to subplots that don't already have axes.
-        **kwargs
-            Additional keyword arguments to be passed to the trace constructor (e.g., x, y, name, mode).
-
-        Returns
-        -------
-        Figure
-            The Figure object on which this method was called.
-
-        Raises
-        ------
-        ValueError
-            If using subplots and either `row` or `col` is not specified when subplot_mode is True.
-
-        Examples
-        --------
-        >>> fig = go.Figure()
-        >>> fig.add_trace(go.Scatter(x=[1,2,3], y=[2,1,2]))
-        Figure(...)
-
-        Adding traces to subplots:
-        >>> fig = make_subplots(rows=2, cols=1)
-        >>> fig.add_trace(go.Scatter(x=[1,2,3], y=[2,1,2]), row=1, col=1)
-        Figure(...)
-        >>> fig.add_trace(go.Scatter(x=[1,2,3], y=[2,1,2]), row=2, col=1)
-        Figure(...)
-        """
-        row_arg = row
-        col_arg = col
+        **kwargs,
+    ) -> go.Figure:
+        row_arg = row if row is not None else 1
+        col_arg = col if col is not None else 1
         scatter_cls = go.Scattergl if self.webgl else go.Scatter
 
-        # If no trace is provided, construct one from kwargs
         if trace is None or isinstance(trace, dict):
-            trace = scatter_cls(**kwargs)
+            trace = scatter_cls(connectgaps=False, **kwargs)
         else:
-            # Update provided trace with any additional kwargs
+            trace.connectgaps = False
             for k, v in kwargs.items():
                 setattr(trace, k, v)
 
         trace_name = trace.name if trace.name else f"Trace {len(self.traces) + 1}"
-        x_data = np.array(trace.x)
-        bin_size = max(len(x_data) // self.num_points, 1)
-        formatted_name = (
-            f'<span style="color:orange;">[R]</span> {trace_name} '
-            f'<span style="color:orange;">~{bin_size}</span>'
-        )
-        trace.name = formatted_name
+        x_data = np.asarray(trace.x)
+        y_data = np.asarray(trace.y)
 
-        if self.subplot_mode and (row_arg is None or col_arg is None):
-            raise ValueError("row and col must be specified when using subplots.")
+        self._init_subplot_range(row_arg, col_arg, x_data, y_data)
 
+        # Initially mark with [R]; will finalize name in _resample_all_traces()
+        trace.name = f'<span style="color:orange;">[R]</span> {trace_name}'
+
+        trace_args = {
+            'secondary_y': secondary_y,
+            'exclude_empty_subplots': exclude_empty_subplots
+        }
         if self.subplot_mode:
-            self.figure.add_trace(trace, row=row_arg, col=col_arg, secondary_y=secondary_y, exclude_empty_subplots=exclude_empty_subplots)
-        else:
-            self.figure.add_trace(trace, secondary_y=secondary_y, exclude_empty_subplots=exclude_empty_subplots)
+            trace_args['row'] = row_arg
+            trace_args['col'] = col_arg
+
+        self.figure.add_trace(trace, **trace_args)
 
         self.traces[trace_name] = {
-            "data": pl.DataFrame({"x": trace.x, "y": trace.y}),
+            "x": x_data,
+            "y": y_data,
             "row": row_arg,
             "col": col_arg,
             "original_name": trace_name,
         }
+
         return self.figure
 
-    def update_layout(self, *args, **kwargs) -> Figure:
-        """
-        Update the layout of the wrapped figure.
-
-        Parameters
-        ----------
-        *args : Any
-            Variable length argument list passed to `figure.update_layout`.
-        **kwargs : Any
-            Arbitrary keyword arguments accepted by `figure.update_layout`.
-
-        Returns
-        -------
-        Figure
-            The updated Figure object.
-        """
+    def update_layout(self, *args, **kwargs) -> go.Figure:
         self.figure.update_layout(*args, **kwargs)
         return self.figure
 
@@ -164,76 +127,8 @@ class FigureResampler:
         x_title: Optional[str] = None,
         y_title: Optional[str] = None,
         figure: Optional[go.Figure] = None,
-        **kwargs
-    ) -> Figure:
-        """
-        Create a figure with subplots.
-
-        make_subplots(
-            rows=1,
-            cols=1,
-            shared_xaxes=False,
-            shared_yaxes=False,
-            start_cell="top-left",
-            vertical_spacing=None,
-            horizontal_spacing=None,
-            subplot_titles=None,
-            specs=None,
-            column_widths=None,
-            row_heights=None,
-            print_grid=False,
-            x_title=None,
-            y_title=None,
-            figure=None,
-            **kwargs
-        )
-
-        Returns a figure with subplots.
-
-        Parameters
-        ----------
-        rows : int, default=1
-            Number of rows in the subplot grid.
-        cols : int, default=1
-            Number of columns in the subplot grid.
-        shared_xaxes : bool, default=False
-            Assign shared x axes.
-        shared_yaxes : bool, default=False
-            Assign shared y axes.
-        start_cell : str, default="top-left"
-            Choose the starting cell in the subplot grid.
-        vertical_spacing : float or None, default=None
-            Space between subplot rows.
-        horizontal_spacing : float or None, default=None
-            Space between subplot columns.
-        subplot_titles : list or None, default=None
-            Title of each subplot as a list in row-major order.
-        specs : list or None, default=None
-            Per-subplot specifications (e.g. 'xy', 'polar', 'scene', etc.).
-        column_widths : list or None, default=None
-            Widths of each column of subplots.
-        row_heights : list or None, default=None
-            Heights of each row of subplots.
-        print_grid : bool, default=False
-            If True, prints a string representation of the subplot grid.
-        x_title : str or None, default=None
-            Title placed below the bottom-most subplot.
-        y_title : str or None, default=None
-            Title placed to the left of the left-most subplot.
-        figure : Figure or None, default=None
-            If provided, subplots are added to this figure, otherwise a new one is created.
-        **kwargs
-            Additional keyword arguments passed to `plotly.subplots.make_subplots`.
-
-        Returns
-        -------
-        Figure
-            The Figure object with the specified subplots.
-
-        Notes
-        -----
-        After calling this method, `self.subplot_mode` is set to True.
-        """
+        **kwargs,
+    ) -> go.Figure:
         self.figure = make_subplots(
             rows=rows,
             cols=cols,
@@ -250,149 +145,150 @@ class FigureResampler:
             x_title=x_title,
             y_title=y_title,
             figure=figure,
-            **kwargs
+            **kwargs,
         )
         self.subplot_mode = True
+        self.rows = rows
+        self.cols = cols
+        self.shared_xaxes = shared_xaxes
+        self.shared_yaxes = shared_yaxes
         return self.figure
 
-    def resample_trace(
-        self,
-        trace_data: pl.DataFrame,
-        x_start: float,
-        x_end: float
-    ) -> Tuple[pl.DataFrame, int]:
-        """
-        Resample a single trace's data to the desired number of points in the given x-range.
+    def _insert_nans_for_gaps(
+        self, x: np.ndarray, y: np.ndarray, gap_mask: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        gap_indices = np.where(gap_mask)[0]
+        if gap_indices.size == 0:
+            return x, y
 
-        Parameters
-        ----------
-        trace_data : polars.DataFrame
-            A dataframe containing columns "x" and "y".
-        x_start : float
-            The start of the x-axis range.
-        x_end : float
-            The end of the x-axis range.
-
-        Returns
-        -------
-        (resampled_data: polars.DataFrame, total_points_in_range: int)
-            A tuple where `resampled_data` is the downsampled dataframe and `total_points_in_range` 
-            is the count of points in the specified range before downsampling.
-        """
-        filtered_data = trace_data.filter(
-            (trace_data["x"] >= x_start) & (trace_data["x"] <= x_end)
-        )
-        total_points_in_range = filtered_data.shape[0]
-        if total_points_in_range <= self.num_points:
-            return filtered_data, total_points_in_range
-
-        indices = np.linspace(0, total_points_in_range - 1, self.num_points).astype(int)
-        return filtered_data[indices], total_points_in_range
-
-    def resample_all_traces(self, x_range: Optional[Tuple[float, float]] = None) -> None:
-        """
-        Resample all traces in the figure using the specified x_range or the current default x_range.
-
-        Parameters
-        ----------
-        x_range : tuple of float, optional
-            (x_start, x_end) specifying the x-axis range to resample over.
-            If None, uses self.x_range.
-
-        Returns
-        -------
-        None
-        """
-        x_start, x_end = x_range if x_range else self.x_range
-        resampled_traces = []
-        for trace_name, trace_info in self.traces.items():
-            trace_data = trace_info["data"]
-            resampled_data, total_points_in_range = self.resample_trace(
-                trace_data, x_start, x_end
-            )
-            bin_size = max(total_points_in_range // self.num_points, 1)
-            updated_name = (
-                f'<span style="color:orange;">[R]</span> {trace_info["original_name"]} '
-                f'<span style="color:orange;">~{bin_size}</span>'
-            )
-            scatter_cls = go.Scattergl if self.webgl else go.Scatter
-            resampled_trace = scatter_cls(
-                x=resampled_data["x"].to_numpy(),
-                y=resampled_data["y"].to_numpy(),
-                name=updated_name,
-            )
-            if self.subplot_mode:
-                resampled_traces.append(
-                    (resampled_trace, trace_info["row"], trace_info["col"])
-                )
+        x_new, y_new = [], []
+        start_idx = 0
+        for gap_idx in gap_indices:
+            if gap_idx > start_idx:
+                x_new.extend(x[start_idx:gap_idx])
+                y_new.extend(y[start_idx:gap_idx])
+                x_new.append(np.nan)
+                y_new.append(np.nan)
+                start_idx = gap_idx
             else:
-                resampled_traces.append((resampled_trace, None, None))
+                start_idx = gap_idx
+
+        x_new.extend(x[start_idx:])
+        y_new.extend(y[start_idx:])
+        return np.array(x_new), np.array(y_new)
+
+    def _resample_all_traces(self) -> None:
+        updated_traces = []
+        all_y_values = []
+
+        for trace_name, trace_info in self.traces.items():
+            row, col = trace_info["row"], trace_info["col"]
+            subplot_info = self.subplot_ranges[(row, col)]
+            x_range = subplot_info["x_range"]
+            y_range = subplot_info["y_range"]
+
+            x = trace_info["x"]
+            y = trace_info["y"]
+
+            x_start, x_end = x_range
+            y_start, y_end = y_range
+            mask = (x >= x_start) & (x <= x_end) & (y >= y_start) & (y <= y_end)
+            x_filtered = x[mask]
+            y_filtered = y[mask]
+            total_points_in_range = x_filtered.size
+
+            if total_points_in_range > self.num_points:
+                indices = self.downsampler.downsample(x_filtered, y_filtered, n_out=self.num_points)
+                x_filtered = x_filtered[indices]
+                y_filtered = y_filtered[indices]
+
+            bin_size = max(total_points_in_range // self.num_points, 1)
+            if bin_size == 1:
+                updated_name = trace_info["original_name"]
+            else:
+                updated_name = (
+                    f'<span style="color:orange;">[R]</span> {trace_info["original_name"]} '
+                    f'<span style="color:orange;">~{self._format_bin_size(bin_size)}</span>'
+                )
+
+            if self.gap_handler is not None and x_filtered.size > 1:
+                gap_mask = self.gap_handler._get_gap_mask(x_filtered)
+                if gap_mask is not None and np.any(gap_mask):
+                    x_filtered, y_filtered = self._insert_nans_for_gaps(x_filtered, y_filtered, gap_mask)
+
+            if x_filtered.size > 0:
+                # Filter out NaNs for axis range calculation
+                all_y_values.append(y_filtered[~np.isnan(y_filtered)])
+
+            scatter_cls = go.Scattergl if self.webgl else go.Scatter
+            seg_trace = scatter_cls(
+                x=x_filtered, y=y_filtered, name=updated_name, connectgaps=False
+            )
+            updated_traces.append((seg_trace, row, col))
 
         self.figure.data = []
-        for trace, row, col in resampled_traces:
-            if row is not None and col is not None:
+        for trace, row, col in updated_traces:
+            if self.subplot_mode:
                 self.figure.add_trace(trace, row=row, col=col)
             else:
                 self.figure.add_trace(trace)
 
-    async def on_relayout(self, event: Any) -> None:
-        """
-        Handle the `plotly_relayout` event to dynamically resample data based on the new x-axis range.
+        # Adjust axis range and margins if we have data
+        if all_y_values:
+            all_y_combined = np.concatenate(all_y_values)
+            y_min = float(np.min(all_y_combined))
+            y_max = float(np.max(all_y_combined))
+            self.figure.update_yaxes(range=[y_min, y_max])
+            self.figure.update_layout(margin=dict(l=0, r=0, t=0, b=0))
 
-        Parameters
-        ----------
-        event : Any
-            The event object from the frontend, containing updated layout information.
+    def _format_bin_size(self, bin_size: int) -> str:
+        if bin_size >= 10**12:
+            return f"{bin_size // 10**12}T"
+        elif bin_size >= 10**9:
+            return f"{bin_size // 10**9}G"
+        elif bin_size >= 10**6:
+            return f"{bin_size // 10**6}M"
+        elif bin_size >= 10**3:
+            return f"{bin_size // 10**3}k"
+        else:
+            return str(bin_size)
 
-        Returns
-        -------
-        None
-        """
-        args = event.args
-        x_start = float(args.get("xaxis.range[0]", self.x_range[0]))
-        x_end = float(args.get("xaxis.range[1]", self.x_range[1]))
-        self.resample_all_traces((x_start, x_end))
-        self.plot.figure = self.figure
-        self.plot.update()
 
-    async def on_doubleclick(self, event: Any) -> None:
-        """
-        Handle the `plotly_doubleclick` event to reset the plot to the initial x-range.
+    def _axis_to_subplot(self, axis_name: str) -> Tuple[int, int]:
+        if axis_name == "xaxis":
+            axis_type, axis_num = 'x', 1
+        elif axis_name == "yaxis":
+            axis_type, axis_num = 'y', 1
+        elif axis_name.startswith('xaxis'):
+            axis_type = 'x'
+            axis_num = int(axis_name[5:])  # after 'xaxis'
+        elif axis_name.startswith('yaxis'):
+            axis_type = 'y'
+            axis_num = int(axis_name[5:])
+        else:
+            axis_type, axis_num = 'x', 1
 
-        Parameters
-        ----------
-        event : Any
-            The event object from the frontend.
-
-        Returns
-        -------
-        None
-        """
-        self.resample_all_traces(self.x_range)
-        self.plot.figure = self.figure
-        self.plot.update()
+        N = axis_num - 1
+        row = (N // self.cols) + 1
+        col = (N % self.cols) + 1
+        return (row, col)
 
     def show(self, options: Optional[dict] = None) -> None:
-        """
-        Create or update the NiceGUI plotly plot in the UI.
+        show(self, options)
 
-        Parameters
-        ----------
-        options : dict, optional
-            A dictionary of Plotly configuration options (e.g., {"displayModeBar": False}).
+    def update(self) -> None:
+        update(self)
 
-        Returns
-        -------
-        None
-        """
-        if options is None:
-            options = {}
-        self.resample_all_traces()
-        fig_dict = self.figure.to_dict()
-        fig_dict["config"] = options
-        if self.plot:
-            self.plot.update(fig_dict)
-        else:
-            self.plot = ui.plotly(fig_dict)
-            self.plot.on("plotly_relayout", self.on_relayout)
-            self.plot.on("plotly_doubleclick", self.on_doubleclick)
+    def reset(self) -> None:
+        self.figure = go.Figure()
+        self.traces.clear()
+        self.subplot_ranges.clear()
+        self.subplot_mode = False
+        self.rows = 1
+        self.cols = 1
+        self.shared_xaxes = False
+        self.shared_yaxes = False
+
+        self.figure.update_layout(dragmode="zoom")
+        self.figure.update_xaxes(fixedrange=False)
+        self.figure.update_yaxes(fixedrange=False)
