@@ -9,7 +9,7 @@ from nicegui import ui
 class FigureResampler:
     def __init__(
         self,
-        figure: Optional[go.Figure] = None,
+        figure: Optional[go.Figure] = go.Figure(),
         num_points: int = 1000,
         downsampler=MinMaxLTTB(),
     ):
@@ -18,11 +18,12 @@ class FigureResampler:
         """
         self.num_points = num_points
         self.downsampler = downsampler
-        self.figure = figure if figure is not None else go.Figure()
+        self.figure = figure
         self.traces: Dict[str, Dict[str, Any]] = {}
         self.plot = None
 
-        self.figure.update_layout(dragmode="zoom")
+        # Allow zooming in both x and y axes if no subplots are present
+        self.figure.update_layout(dragmode="zoom", xaxis=dict(fixedrange=False), yaxis=dict(fixedrange=False))
 
     def add_trace(self, trace: Optional[BaseTraceType] = None, row: Optional[int] = None, col: Optional[int] = None, **kwargs) -> go.Figure:
         if trace is None:
@@ -37,6 +38,8 @@ class FigureResampler:
         # Add trace to the correct subplot if rows and columns are specified
         if row is not None and col is not None:
             self.figure.add_trace(trace, row=row, col=col)
+            # Fix y-axis for subplots
+            self.figure.update_yaxes(fixedrange=True, row=row, col=col)
         else:
             self.figure.add_trace(trace)
 
@@ -111,12 +114,21 @@ class FigureResampler:
         fig_dict["config"] = options
 
         if self.plot:
+            # Update the existing plot
             self.plot.figure = self.figure
             self.plot.update()
         else:
+            # Create a new plot
             self.plot = ui.plotly(fig_dict)
             self.plot.on("plotly_relayout", partial(self._on_relayout))
             self.plot.on("plotly_doubleclick", partial(self._on_doubleclick))
+
+    def reset(self) -> None:
+        """
+        Reset the figure layout and resample all traces.
+        """
+        self.traces = {}
+        self.figure.data = []
 
     async def _on_relayout(self, event: Any) -> None:
         args = event.args
@@ -165,7 +177,7 @@ class FigureResampler:
         self._resample_all_traces()
         self.plot.figure = self.figure
         self.plot.update()
-
+        
     async def _on_doubleclick(self, event: Any) -> None:
         """
         Handle double-click events to reset the figure layout and resample all traces.

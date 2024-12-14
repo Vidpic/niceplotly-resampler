@@ -19,9 +19,9 @@ def generate_raw_data(total_points=100_000):
     return x, y1, y2
 
 x, y1, y2 = generate_raw_data()
-fig = FigureResampler(go.Figure())
-fig.add_trace(go.Scattergl(x=x, y=y1, name="Trace 1"))
-fig.add_trace(go.Scattergl(x=x, y=y2, name="Trace 2"))
+fig = FigureResampler(make_subplots(rows=2, cols=2))
+fig.add_trace(go.Scattergl(x=x, y=y1, name="Trace 1"), row=1, col=1)
+fig.add_trace(go.Scattergl(x=x, y=y2, name="Trace 2"), row=1, col=2)
 fig.update_layout(showlegend=True)
 
 fig2 = FigureResamplerOld(go.Figure())
@@ -37,11 +37,11 @@ plot = fig.show(options={"displayModeBar": False})
 ui.button("Reset", on_click=lambda: load_figure())
 
 def load_figure():
-    fig = FigureResampler(make_subplots(rows=2, cols=2, shared_xaxes=True, shared_yaxes=True))
+    fig.reset()
     fig.add_trace(go.Scattergl(x=x, y=y1, name="Trace 1"), row=1, col=1)
     fig.add_trace(go.Scattergl(x=x, y=y2, name="Trace 2"), row=2, col=2)
     fig.update_layout(showlegend=True)
-    plot = fig.show(options={"displayModeBar": False})
+    fig.show(options={"displayModeBar": False})
 
 ui.run()
 
