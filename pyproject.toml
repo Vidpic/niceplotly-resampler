@@ -15,7 +15,7 @@ classifiers = [
   "Programming Language :: Python :: 3.9",
   "License :: OSI Approved :: MIT License",
 ]
-dependencies = ['plotly', 'pandas', 'numpy']
+dependencies = ['numpy', 'plotly', 'nicegui', 'tsdownsample']
 
 [project.urls]
 Repository = "https://github.com/Vidpic/niceplotly_resampler"
