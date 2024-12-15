@@ -11,7 +11,7 @@ Instead of implementing its own downsampling algorithms, NicePloty-Resampler uti
 
 By default, NicePloty-Resampler uses the MinMaxLTTB method to reduce datasets to 1000 key points for visualization.
 
-![example gif](https://github.com/Vidpic/niceplotly-resampler/main/docs/example.gif)
+![example](https://github.com/Vidpic/niceplotly-resampler/blob/main/docs/example.gif)
 
 ## Install
 ```bash
