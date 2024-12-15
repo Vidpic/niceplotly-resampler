@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "niceplotly-resampler"
-version = "0.1.1"
+version = "0.1.2"
 authors = [{ name = "Vidpic" }]
 description = "Visualize large time series data with plotly.py in NiceGUI"
 readme = "README.md"
@@ -18,8 +18,8 @@ classifiers = [
 dependencies = ['numpy', 'plotly', 'nicegui', 'tsdownsample']
 
 [project.urls]
-Repository = "https://github.com/Vidpic/niceplotly_resampler"
-Issues = "https://github.com/Vidpic/niceplotly_resampler/issues"
+Repository = "https://github.com/Vidpic/niceplotly-resampler"
+Issues = "https://github.com/Vidpic/niceplotly-resampler/issues"
 
 [tool.setuptools.packages.find]
 include = ["niceplotly_resampler"]

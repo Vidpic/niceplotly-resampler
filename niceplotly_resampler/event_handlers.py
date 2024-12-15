@@ -16,7 +16,7 @@ async def _on_relayout(resampler, event: Any) -> None:
 
         axis_part, range_part = k.split(".range[")
         axis_part = axis_part.strip()
-
+        
         row, col = resampler._axis_to_subplot(axis_part)
 
         if (row, col) not in updated_subplots:
