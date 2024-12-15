@@ -94,6 +94,16 @@ class FigureResampler:
         """
         self.figure.update_layout(**kwargs)
 
+    def update(self, figure_resampler: "FigureResampler") -> None:
+        """
+        Update the figure with the provided FigureResampler.
+
+        Args:
+            figure_resampler: The FigureResampler to change the figure to.
+        """
+        self.figure = figure_resampler.figure
+        self.traces = figure_resampler.traces
+
     def reset(self) -> None:
         """
         Reset the figure by removing all traces.
