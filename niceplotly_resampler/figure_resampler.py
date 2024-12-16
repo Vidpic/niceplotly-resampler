@@ -75,6 +75,9 @@ class FigureResampler:
         else:
             self.figure.add_trace(trace)
 
+        # Ensure uirevision is set to preserve UI state for example when disabling traces
+        self.figure.update_layout(uirevision=True)
+
         self.traces[trace_name] = {
             "x": x_data,
             "y": y_data,
